@@ -1,0 +1,125 @@
+'use strict'
+//require
+var mysql = require('mysql');
+var bodyParser = require('body-parser');
+var express = require('express');
+var moment = require('moment');
+var cookieParser = require('cookie-parser');
+var authUser = require('./middleware/auth-user');
+
+
+//create objects and assign them to variables
+var app = express();
+var connection = mysql.createConnection({
+host: '127.0.0.1',
+user: 'vagrant',
+password:'',
+database:'twitter'
+});
+
+connection.connect(function(err){
+    if(err){
+        console.log(err);
+        return err;
+        }
+    console.log('Connected to the database');
+    app.listen(8080, function(){
+        console.log('Web server listening on port 8080');
+    });
+});
+
+//App sentting
+//Template engine
+app.set('view engine', 'ejs');
+app.set('views', './views');
+
+//Get the middleware and add to the app
+app.use(express.static('./public'));
+app.use(bodyParser.urlencoded({ extended: true }));
+
+app.use(cookieParser());
+//ABOVE: Now on each request, Express will parse cookies for us and add them to the
+//request object with the key "cookies". The "cookies" object contains name-value
+//pairs with the name of the cookie being the key.
+
+
+//App routes
+//Homepage
+app.get('/', function(req, res) {
+    var query = 'SELECT * FROM Tweets ORDER BY created_at DESC';
+    var tweetsCreated = req.cookies.tweets_created || [];
+
+    connection.query(query, function(err, results){
+        if(err) {
+            console.log(err);
+        }
+        for(var i = 0; i < results.length; i++){
+            var tweet = results[i];
+            tweet.time_from_now = moment(tweet.created_at).fromNow();
+            tweet.isEditable = tweetsCreated.includes(tweet.id);
+        }
+        res.render('tweets', {tweets: results});
+        //console.log('tweets correctly rendered')
+    });
+});
+
+//create tweets route
+app.post('/tweets/create', function(req, res) {
+      var query = 'INSERT INTO Tweets(handle, body) VALUES(?, ?)';
+      var handle = req.body.handle;
+      var body = req.body.body;
+      var tweetsCreated = req.cookies.tweets_created || [];
+
+      connection.query(query, [handle, body], function(err, results) {
+          if(err) {
+              console.log(err);
+        }
+
+        tweetsCreated.push(results.insertId);
+        res.cookie('tweets_created', tweetsCreated, { httpOnly: true });
+
+        res.redirect('/');
+    });
+});
+
+//edit tweets route
+app.get('/tweets/:id([0-9]+)/edit', authUser, function(req, res){
+        var query = 'SELECT * FROM Tweets WHERE id = ?';
+        var id = req.params.id;
+
+        connection.query(query, [id], function(err, results){
+            if(err || results.length === 0) {
+            console.log(err || 'No matching tweet found');
+            res.redirect('/');
+            return;
+            }
+        var tweet = results[0];
+        tweet.time_from_now = moment(tweet.created_at).fromNow();
+
+        res.render('edit-tweet', { tweet: results[0]});
+
+    });
+});
+
+//update route
+app.post('/tweets/:id([0-9]+)/update', authUser, function(req, res){
+    var updateQuery = 'UPDATE Tweets SET body = ?, handle = ? WHERE id = ?';
+    var deleteQuery = 'DELETE FROM Tweets WHERE id = ?';
+    var id = req.params.id;
+    var handle = req.body.handle;
+    var body = req.body.body;
+    var isDelete = req.body.delete_button !== undefined;
+    var queryCallBack = function(err){
+        if(err) {
+            console.log(err);
+        }
+
+    res.redirect('/')
+    };
+
+    if(isDelete) {
+        connection.query(deleteQuery, [id], queryCallBack);
+    } else {
+            connection.query(updateQuery, [body, handle, id], queryCallBack);
+    }
+});
